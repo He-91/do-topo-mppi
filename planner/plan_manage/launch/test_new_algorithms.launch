@@ -1,0 +1,25 @@
+<launch>
+  <!-- Test launch file for new topological and MPPI algorithms -->
+  
+  <!-- Load parameters -->
+  <rosparam file="$(find ego_planner)/launch/advanced_param.xml" command="load" />
+  
+  <!-- Topological search parameters -->
+  <param name="topo/step_size"            value="0.2" />
+  <param name="topo/search_radius"        value="3.0" />
+  <param name="topo/max_sample_num"       value="1000" />
+  
+  <!-- MPPI parameters -->
+  <param name="mppi/num_samples"          value="500" />
+  <param name="mppi/horizon_steps"        value="20" />
+  <param name="mppi/dt"                   value="0.1" />
+  <param name="mppi/lambda"               value="1.0" />
+  <param name="mppi/sigma_pos"            value="0.2" />
+  <param name="mppi/sigma_vel"            value="0.5" />
+  <param name="mppi/sigma_acc"            value="1.0" />
+  
+  <!-- Test node -->
+  <node pkg="path_searching" type="test_topo_mppi" name="test_topo_mppi" output="screen">
+  </node>
+  
+</launch>
