@@ -1,0 +1,30 @@
+<launch>
+  <!-- 简单动态障碍物测试 - 不需要规划器 -->
+  
+  <!-- 使用真实时间而非仿真时间 -->
+  <param name="/use_sim_time" value="false"/>
+  
+  <arg name="map_size_x" value="40.0"/>
+  <arg name="map_size_y" value="20.0"/>
+  <arg name="map_size_z" value=" 5.0"/>
+
+  <!-- 动态障碍物生成器 -->
+  <node pkg="map_generator" type="dynamic_obstacle_generator" name="dynamic_obstacle_generator" output="screen">
+    <param name="map/x_size" value="$(arg map_size_x)" />
+    <param name="map/y_size" value="$(arg map_size_y)" />
+    <param name="map/z_size" value="$(arg map_size_z)" />
+    
+    <param name="dynamic_obstacles/update_rate" value="20.0" />
+    <param name="dynamic_obstacles/resolution" value="0.15" />
+    
+    <!-- 各类动态障碍物数量 -->
+    <param name="dynamic_obstacles/num_linear" value="3" />
+    <param name="dynamic_obstacles/num_circular" value="2" />
+    <param name="dynamic_obstacles/num_pendulum" value="2" />
+    <param name="dynamic_obstacles/num_random" value="1" />
+  </node>
+
+  <!-- RViz可视化 -->
+  <node type="rviz" name="rviz" pkg="rviz" args="-d $(find ego_planner)/launch/simple_dynamic_test.rviz" required="false"/>
+
+</launch>

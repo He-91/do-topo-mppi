@@ -172,11 +172,16 @@ void renderSensedPoints(const ros::TimerEvent & event)
 vector<float> cloud_data;
 void rcvGlobalPointCloudCallBack(const sensor_msgs::PointCloud2 & pointcloud_map )
 {
-  if(has_global_map)
-    return;
+  // 允许持续更新点云数据以支持动态障碍物
+  // if(has_global_map)
+  //   return;
 
-  ROS_WARN("Global Pointcloud received..");
-  //load global map
+  if(!has_global_map) {
+    ROS_WARN("Global Pointcloud received..");
+  }
+  
+  //load global map (每次都清空并重新加载)
+  cloud_data.clear();  // 清空旧数据
   pcl::PointCloud<pcl::PointXYZ> cloudIn;
   pcl::PointXYZ pt_in;
   //transform map to point cloud format
@@ -187,12 +192,15 @@ void rcvGlobalPointCloudCallBack(const sensor_msgs::PointCloud2 & pointcloud_map
     cloud_data.push_back(pt_in.y);
     cloud_data.push_back(pt_in.z);
   }
-  printf("global map has points: %d.\n", (int)cloud_data.size() / 3 );
-  //pass cloud_data to depth render
+  
+  if(!has_global_map) {
+    printf("global map has points: %d.\n", (int)cloud_data.size() / 3 );
+    depth_hostptr = (int*) malloc(width * height * sizeof(int));
+    has_global_map = true;
+  }
+  
+  //pass cloud_data to depth render (每次都更新)
   depthrender.set_data(cloud_data);
-  depth_hostptr = (int*) malloc(width * height * sizeof(int));
-
-  has_global_map = true;
 }
 
 void rcvLocalPointCloudCallBack(const sensor_msgs::PointCloud2 & pointcloud_map )

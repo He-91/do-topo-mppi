@@ -30,3 +30,13 @@ add_executable (random_forest src/random_forest_sensing.cpp )
 target_link_libraries(random_forest
   ${catkin_LIBRARIES}
   ${PCL_LIBRARIES})
+
+add_executable (dynamic_obstacle_generator src/dynamic_obstacle_generator.cpp )
+target_link_libraries(dynamic_obstacle_generator
+  ${catkin_LIBRARIES}
+  ${PCL_LIBRARIES})
+
+add_executable (cloud_merger src/cloud_merger.cpp )
+target_link_libraries(cloud_merger
+  ${catkin_LIBRARIES}
+  ${PCL_LIBRARIES})
