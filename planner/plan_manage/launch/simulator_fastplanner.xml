@@ -92,8 +92,11 @@
         <param name="map/y_size"     value="$(arg map_size_y_)"/>
         <param name="map/z_size"     value="$(arg map_size_z_)"/>
 
-        <remap from="~global_map" to="/map_generator/global_cloud"/>
+        <!-- 修改：订阅融合后的地图而不是仅静态地图 -->
+        <remap from="~global_map" to="/merged_global_map"/>
         <remap from="~odometry"   to="$(arg odometry_topic)"/>
+        <!-- 修复：将rendered_pcl重映射到cloud，保持接口一致性 -->
+        <remap from="~rendered_pcl" to="~cloud"/>
   </node>
 
 </launch>
