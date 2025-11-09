@@ -9,7 +9,8 @@ using namespace Eigen;
 namespace ego_planner {
 
 MPPIPlanner::MPPIPlanner() 
-    : num_samples_(1000), horizon_steps_(20), dt_(0.1), lambda_(1.0),
+    : num_samples_(1000), num_samples_min_(500), num_samples_max_(2000),
+      use_adaptive_sampling_(true), horizon_steps_(20), dt_(0.1), lambda_(1.0),
       sigma_pos_(0.2), sigma_vel_(0.5), sigma_acc_(1.0),
       w_obstacle_(100.0), w_smoothness_(10.0), w_goal_(50.0), w_velocity_(20.0),
       max_velocity_(3.0), max_acceleration_(3.0),
@@ -41,11 +42,14 @@ bool MPPIPlanner::planTrajectory(const Vector3d& start_pos,
                                 const Vector3d& goal_vel,
                                 MPPITrajectory& optimal_trajectory) {
     
-    vector<MPPITrajectory> trajectories(num_samples_);
+    // Adaptive sampling: adjust number of samples based on environment complexity
+    int adaptive_samples = computeAdaptiveSamples(start_pos, goal_pos);
+    
+    vector<MPPITrajectory> trajectories(adaptive_samples);
     double min_cost = std::numeric_limits<double>::max();
     
     // Generate rollout trajectories
-    for (int i = 0; i < num_samples_; ++i) {
+    for (int i = 0; i < adaptive_samples; ++i) {
         trajectories[i].resize(horizon_steps_);
         rolloutTrajectory(start_pos, start_vel, goal_pos, goal_vel, trajectories[i]);
         
@@ -100,11 +104,14 @@ bool MPPIPlanner::planTrajectory(const Vector3d& start_pos,
                                 const vector<Vector3d>& initial_path,
                                 MPPITrajectory& optimal_trajectory) {
     
-    vector<MPPITrajectory> trajectories(num_samples_);
+    // Adaptive sampling: adjust number of samples based on environment complexity
+    int adaptive_samples = computeAdaptiveSamples(start_pos, goal_pos);
+    
+    vector<MPPITrajectory> trajectories(adaptive_samples);
     double min_cost = std::numeric_limits<double>::max();
     
     // Generate rollout trajectories guided by initial path
-    for (int i = 0; i < num_samples_; ++i) {
+    for (int i = 0; i < adaptive_samples; ++i) {
         trajectories[i].resize(horizon_steps_);
         rolloutTrajectory(start_pos, start_vel, goal_pos, goal_vel, initial_path, trajectories[i]);
         
@@ -136,7 +143,7 @@ bool MPPIPlanner::planTrajectory(const Vector3d& start_pos,
     } else {
         ROS_WARN("[MPPI] Weight sum too small, using uniform weights");
         for (auto& traj : trajectories) {
-            traj.weight = 1.0 / num_samples_;
+            traj.weight = 1.0 / adaptive_samples;
         }
     }
     
@@ -147,8 +154,8 @@ bool MPPIPlanner::planTrajectory(const Vector3d& start_pos,
     visualizeTrajectories(trajectories);
     visualizeOptimalTrajectory(optimal_trajectory);
     
-    ROS_INFO("[MPPI] Guided trajectory with cost: %.3f (using %zu waypoints)", 
-             optimal_trajectory.cost, initial_path.size());
+    ROS_INFO("[MPPI] Guided trajectory with cost: %.3f (using %zu waypoints, %d adaptive samples)", 
+             optimal_trajectory.cost, initial_path.size(), adaptive_samples);
     return true;
 }
 
@@ -307,15 +314,21 @@ double MPPIPlanner::calculateTrajectoryCost(const MPPITrajectory& trajectory,
                                           const Vector3d& goal_vel) {
     double total_cost = 0.0;
     
+    // Early exit optimization: check collision along trajectory
     for (int t = 0; t < trajectory.size(); ++t) {
         // ✅ Phase 3: Use ESDF for O(1) obstacle distance query
         double dist = grid_map_->getDistance(trajectory.positions[t]);
         
+        // Early exit if collision detected - no need to compute further
+        if (dist < 0.0) {
+            return std::numeric_limits<double>::max();
+        }
+        
         // Obstacle cost - exponentially increase as we get closer
         total_cost += w_obstacle_ * obstacleCost(trajectory.positions[t], dist);
         
-        // Check for collision - infinite cost if inside obstacle (negative distance)
-        if (dist < 0.0) {
+        // Early exit if cost already too high (optimization)
+        if (total_cost > 1e6) {
             return std::numeric_limits<double>::max();
         }
     }
@@ -635,6 +648,64 @@ void MPPIPlanner::visualizeOptimalTrajectory(const MPPITrajectory& trajectory) {
     
     optimal_trajectory_pub_.publish(marker_array);
     ROS_DEBUG("[MPPI] Published optimal trajectory with %zu markers", marker_array.markers.size() - 1);
+}
+
+// Adaptive sampling: compute number of samples based on environment complexity
+int MPPIPlanner::computeAdaptiveSamples(const Vector3d& start_pos, const Vector3d& goal_pos) {
+    if (!use_adaptive_sampling_) {
+        return num_samples_;  // Use fixed number if adaptive sampling is disabled
+    }
+    
+    // Sample environment complexity along straight line from start to goal
+    Vector3d direction = (goal_pos - start_pos).normalized();
+    double distance = (goal_pos - start_pos).norm();
+    
+    int num_checks = std::min(20, static_cast<int>(distance / 0.5));  // Check every 0.5m, max 20 points
+    if (num_checks < 5) num_checks = 5;  // At least 5 checks
+    
+    double avg_clearance = 0.0;
+    int valid_checks = 0;
+    
+    for (int i = 0; i < num_checks; ++i) {
+        double t = static_cast<double>(i) / (num_checks - 1);
+        Vector3d check_pos = start_pos + direction * distance * t;
+        
+        double dist = grid_map_->getDistance(check_pos);
+        if (dist >= 0.0) {  // Valid check (not inside obstacle)
+            avg_clearance += dist;
+            valid_checks++;
+        }
+    }
+    
+    if (valid_checks == 0) {
+        // Very cluttered environment, use maximum samples
+        ROS_DEBUG("[MPPI] Adaptive sampling: cluttered environment, using max samples %d", num_samples_max_);
+        return num_samples_max_;
+    }
+    
+    avg_clearance /= valid_checks;
+    
+    // Adaptive sampling logic:
+    // - High clearance (> 3m): fewer samples needed (min_samples)
+    // - Low clearance (< 1m): more samples needed (max_samples)
+    // - Medium clearance: interpolate
+    
+    int adaptive_samples;
+    if (avg_clearance >= 3.0) {
+        adaptive_samples = num_samples_min_;  // Open space, use minimum
+    } else if (avg_clearance <= 1.0) {
+        adaptive_samples = num_samples_max_;  // Cluttered space, use maximum
+    } else {
+        // Linear interpolation between min and max
+        double ratio = (3.0 - avg_clearance) / 2.0;  // ratio ∈ [0, 1]
+        adaptive_samples = num_samples_min_ + 
+                          static_cast<int>(ratio * (num_samples_max_ - num_samples_min_));
+    }
+    
+    ROS_DEBUG("[MPPI] Adaptive sampling: avg_clearance=%.2fm, samples=%d (min=%d, max=%d)", 
+              avg_clearance, adaptive_samples, num_samples_min_, num_samples_max_);
+    
+    return adaptive_samples;
 }
 
 } // namespace ego_planner

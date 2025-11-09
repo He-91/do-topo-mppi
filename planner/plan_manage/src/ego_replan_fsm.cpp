@@ -33,8 +33,10 @@ namespace ego_planner
     planner_manager_->initPlanModules(nh, visualization_);
 
     /* callback */
-    exec_timer_ = nh.createTimer(ros::Duration(0.01), &EGOReplanFSM::execFSMCallback, this);
-    safety_timer_ = nh.createTimer(ros::Duration(0.05), &EGOReplanFSM::checkCollisionCallback, this);
+    // Increased FSM execution frequency from 100Hz to 150Hz for better responsiveness
+    exec_timer_ = nh.createTimer(ros::Duration(0.00667), &EGOReplanFSM::execFSMCallback, this);  // 150Hz
+    // Increased collision check frequency from 20Hz to 50Hz for better safety
+    safety_timer_ = nh.createTimer(ros::Duration(0.02), &EGOReplanFSM::checkCollisionCallback, this);  // 50Hz
 
     odom_sub_ = nh.subscribe("/odom_world", 1, &EGOReplanFSM::odometryCallback, this);
 
@@ -382,15 +384,15 @@ namespace ego_planner
     if (exec_state_ == WAIT_TARGET || info->start_time_.toSec() < 1e-5)
       return;
 
-    /* ---------- check trajectory ---------- */
+    /* ---------- check trajectory (optimized with early exit) ---------- */
     constexpr double time_step = 0.01;
     double t_cur = (ros::Time::now() - info->start_time_).toSec();
     double t_2_3 = info->duration_ * 2 / 3;
-    for (double t = t_cur; t < info->duration_; t += time_step)
+    double check_horizon = (t_cur < t_2_3) ? t_2_3 : info->duration_;  // Precompute check horizon
+    
+    for (double t = t_cur; t < check_horizon; t += time_step)
     {
-      if (t_cur < t_2_3 && t >= t_2_3) // If t_cur < t_2_3, only the first 2/3 partition of the trajectory is considered valid and will get checked.
-        break;
-
+      // Early exit optimization: check collision directly
       if (map->getInflateOccupancy(info->position_traj_.evaluateDeBoorT(t)))
       {
         if (planFromCurrentTraj()) // Make a chance

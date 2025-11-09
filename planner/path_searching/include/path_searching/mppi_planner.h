@@ -41,7 +41,10 @@ private:
     std::string frame_id_;
     
     // MPPI parameters
-    int num_samples_;          // Number of rollout samples
+    int num_samples_;          // Number of rollout samples (default: 1000)
+    int num_samples_min_;      // Minimum samples for adaptive sampling (default: 500)
+    int num_samples_max_;      // Maximum samples for adaptive sampling (default: 2000)
+    bool use_adaptive_sampling_; // Enable adaptive sampling based on environment complexity
     int horizon_steps_;        // Planning horizon steps
     double dt_;                // Time step
     double lambda_;            // Temperature parameter for importance sampling
@@ -93,6 +96,9 @@ private:
     void constrainDynamics(Eigen::Vector3d& velocity, Eigen::Vector3d& acceleration);
     
     MPPITrajectory weightedAverage(const std::vector<MPPITrajectory>& trajectories);
+    
+    // Adaptive sampling
+    int computeAdaptiveSamples(const Eigen::Vector3d& start_pos, const Eigen::Vector3d& goal_pos);
     
     // Visualization functions
     void visualizeTrajectories(const std::vector<MPPITrajectory>& trajectories);
