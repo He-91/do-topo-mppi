@@ -109,11 +109,11 @@
     <param name="dynamic_obstacles/update_rate" value="30.0" />
     <param name="dynamic_obstacles/resolution" value="0.15" />
     
-    <!-- 各类动态障碍物数量 -->
-    <param name="dynamic_obstacles/num_linear" value="3" />     <!-- 直线运动 -->
-    <param name="dynamic_obstacles/num_circular" value="2" />   <!-- 圆周运动 -->
-    <param name="dynamic_obstacles/num_pendulum" value="2" />   <!-- 钟摆运动 -->
-    <param name="dynamic_obstacles/num_random" value="1" />     <!-- 随机游走 -->
+    <!-- 各类动态障碍物数量 (优化分布密度) -->
+    <param name="dynamic_obstacles/num_linear" value="3" />     <!-- 直线运动 6->3 -->
+    <param name="dynamic_obstacles/num_circular" value="2" />   <!-- 圆周运动 4->2 -->
+    <param name="dynamic_obstacles/num_pendulum" value="2" />   <!-- 钟摆运动 4->2 -->
+    <param name="dynamic_obstacles/num_random" value="1" />     <!-- 随机游走 2->1 -->
   </node>
 
   <!-- ============================================ -->

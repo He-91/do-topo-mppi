@@ -21,6 +21,7 @@
 #include <message_filters/sync_policies/approximate_time.h>
 #include <message_filters/sync_policies/exact_time.h>
 #include <message_filters/time_synchronizer.h>
+#include <visualization_msgs/MarkerArray.h>  // ✅ NEW: For dynamic obstacles
 
 #include <plan_env/raycast.h>
 
@@ -134,6 +135,15 @@ struct MappingData {
 
   double fuse_time_, max_fuse_time_;
   int update_num_;
+  
+  // ✅ NEW: Dynamic obstacle prediction data
+  struct DynamicObstaclePrediction {
+    int obstacle_id;
+    std::vector<Eigen::Vector3d> predicted_positions;  // Future positions over time
+    double time_resolution;  // Time between prediction points (e.g., 0.1s)
+  };
+  std::vector<DynamicObstaclePrediction> dynamic_predictions_;
+  ros::Time last_prediction_time_;
 
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
@@ -188,6 +198,10 @@ public:
   inline double getDistance(const Eigen::Vector3i& id);
   inline double getDistanceWithGrad(const Eigen::Vector3d& pos, Eigen::Vector3d& grad);
   void updateESDF();
+  
+  // ✅ NEW: Time-aware collision checking for dynamic obstacles
+  bool checkDynamicCollision(const Eigen::Vector3d& pos, double time_from_now, double safety_radius = 0.5);
+  double getDynamicDistance(const Eigen::Vector3d& pos, double time_from_now);
 
   typedef std::shared_ptr<GridMap> Ptr;
 
@@ -203,6 +217,9 @@ private:
   void depthOdomCallback(const sensor_msgs::ImageConstPtr& img, const nav_msgs::OdometryConstPtr& odom);
   void cloudCallback(const sensor_msgs::PointCloud2ConstPtr& img);
   void odomCallback(const nav_msgs::OdometryConstPtr& odom);
+  
+  // ✅ NEW: Dynamic obstacle prediction callback
+  void dynamicPredictionCallback(const visualization_msgs::MarkerArrayConstPtr& msg);
 
   // update occupancy by raycasting
   void updateOccupancyCallback(const ros::TimerEvent& /*event*/);
@@ -236,6 +253,7 @@ private:
   SynchronizerImageOdom sync_image_odom_;
 
   ros::Subscriber indep_cloud_sub_, indep_odom_sub_;
+  ros::Subscriber dynamic_prediction_sub_;  // ✅ NEW: Subscribe to predicted paths
   ros::Publisher map_pub_, map_inf_pub_;
   ros::Publisher unknown_pub_;
   ros::Timer occ_timer_, vis_timer_;

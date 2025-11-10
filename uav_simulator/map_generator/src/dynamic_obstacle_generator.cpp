@@ -50,6 +50,12 @@ struct DynamicObstacle {
   // 随机游走参数
   Eigen::Vector3d random_target;
   double change_target_time;
+  
+  // ✅ CERLAB-inspired: 速度预测增强
+  std::vector<Eigen::Vector3d> position_history;  // 历史位置用于速度估计
+  Eigen::Vector3d estimated_velocity;             // 估计速度（从历史计算）
+  std::vector<Eigen::Vector3d> predicted_trajectory; // 预测轨迹（0.5-2s）
+  static const int HISTORY_SIZE = 10;             // 保持10帧历史（~0.33s @ 30Hz）
 };
 
 class DynamicObstacleGenerator {
@@ -58,6 +64,7 @@ private:
   ros::Publisher cloud_pub_;
   ros::Publisher marker_pub_;
   ros::Publisher velocity_pub_;
+  ros::Publisher predicted_path_pub_;  // ✅ NEW: 预测轨迹发布器
   ros::Timer update_timer_;
   
   vector<DynamicObstacle> obstacles_;
@@ -97,6 +104,7 @@ public:
     cloud_pub_ = nh_.advertise<sensor_msgs::PointCloud2>("/dynamic_obstacles/cloud", 10);
     marker_pub_ = nh_.advertise<visualization_msgs::MarkerArray>("/dynamic_obstacles/markers", 10);
     velocity_pub_ = nh_.advertise<visualization_msgs::MarkerArray>("/dynamic_obstacles/velocities", 10);
+    predicted_path_pub_ = nh_.advertise<visualization_msgs::MarkerArray>("/dynamic_obstacles/predicted_paths", 10); // ✅ NEW
     
     // 初始化随机数生成器
     rng_.seed(std::random_device{}());
@@ -119,74 +127,118 @@ public:
   
   void generateObstacles() {
     int num_linear, num_circular, num_pendulum, num_random;
-    nh_.param("dynamic_obstacles/num_linear", num_linear, 2);
-    nh_.param("dynamic_obstacles/num_circular", num_circular, 2);
-    nh_.param("dynamic_obstacles/num_pendulum", num_pendulum, 2);
-    nh_.param("dynamic_obstacles/num_random", num_random, 1);
+    nh_.param("dynamic_obstacles/num_linear", num_linear, 6);      // 2 -> 6
+    nh_.param("dynamic_obstacles/num_circular", num_circular, 4);  // 2 -> 4
+    nh_.param("dynamic_obstacles/num_pendulum", num_pendulum, 4);  // 2 -> 4
+    nh_.param("dynamic_obstacles/num_random", num_random, 2);      // 1 -> 2
     
     int id = 0;
     
-    // 1. 直线运动障碍物
+    // 计算地图区域划分（用于均匀分布）
+    double map_width = map_x_max_ - map_x_min_;
+    double map_height = map_y_max_ - map_y_min_;
+    
+    // 1. 直线运动障碍物 - 分布在地图不同区域
     for (int i = 0; i < num_linear; i++) {
       DynamicObstacle obs;
       obs.id = id++;
       obs.motion_type = LINEAR;
       obs.radius = 0.5;
-      obs.height = 2.5;
-      obs.speed = 0.5 + 0.2 * i;  // 降低速度: 0.5-0.9 m/s
+      obs.height = 3.8;  // 高度提升: 2.5 -> 3.8m
+      obs.speed = 0.3 + 0.05 * i;  // 速度: 0.3-0.55 m/s (远低于无人机2-4m/s)
       obs.time_offset = i * 2.0;  // 时间偏移
       
-      // 设置起点和运动方向
-      if (i % 2 == 0) {
-        // 水平方向
-        obs.start_pos = Eigen::Vector3d(map_x_min_ + 5, 
-                                        map_y_min_ + 3 + i * 4, 
+      // 均匀分布在地图不同区域
+      if (i == 0) {
+        // 左上区域 - 水平向右运动
+        obs.start_pos = Eigen::Vector3d(map_x_min_ + 3, 
+                                        map_y_max_ - 5, 
                                         0.0);
         obs.velocity = Eigen::Vector3d(obs.speed, 0, 0);
-      } else {
-        // 垂直方向
-        obs.start_pos = Eigen::Vector3d(5 + i * 3, 
+      } else if (i == 1) {
+        // 中心区域 - 垂直向上运动
+        obs.start_pos = Eigen::Vector3d((map_x_min_ + map_x_max_) * 0.5, 
                                         map_y_min_ + 3, 
                                         0.0);
         obs.velocity = Eigen::Vector3d(0, obs.speed, 0);
+      } else {
+        // 右下区域 - 对角线运动
+        obs.start_pos = Eigen::Vector3d(map_x_max_ - 5, 
+                                        map_y_min_ + 3, 
+                                        0.0);
+        obs.velocity = Eigen::Vector3d(-obs.speed * 0.7, obs.speed * 0.7, 0);
       }
       obs.position = obs.start_pos;
+      // ✅ NEW: 初始化速度预测相关字段
+      obs.estimated_velocity = obs.velocity;
+      obs.position_history.clear();
+      obs.predicted_trajectory.clear();
+      
       obstacles_.push_back(obs);
     }
     
-    // 2. 圆周运动障碍物
+    // 2. 圆周运动障碍物 - 分散在地图左右两侧
     for (int i = 0; i < num_circular; i++) {
       DynamicObstacle obs;
       obs.id = id++;
       obs.motion_type = CIRCULAR;
       obs.radius = 0.4;
-      obs.height = 2.0;
-      obs.speed = 0.2 + 0.1 * i;  // 降低角速度: 0.2-0.3 rad/s
+      obs.height = 3.5;  // 高度提升: 2.0 -> 3.5m
+      obs.speed = 0.15 + 0.05 * i;  // 角速度: 0.15-0.35 rad/s (切向速度≈0.5-1.0m/s)
       obs.time_offset = i * M_PI;  // 相位差
       
-      // 圆心位置
-      obs.circle_center = Eigen::Vector3d(0, -5 + i * 10, 0.0);
-      obs.circle_radius = 3.0 + i * 1.0;
+      // 圆心位置 - 左右分布
+      if (i == 0) {
+        // 左侧区域
+        obs.circle_center = Eigen::Vector3d(map_x_min_ + map_width * 0.25, 
+                                           map_y_min_ + map_height * 0.5, 
+                                           0.0);
+      } else {
+        // 右侧区域
+        obs.circle_center = Eigen::Vector3d(map_x_min_ + map_width * 0.75, 
+                                           map_y_min_ + map_height * 0.5, 
+                                           0.0);
+      }
+      obs.circle_radius = 3.0 + i * 0.5;
       obs.start_pos = obs.circle_center;
       obs.position = obs.circle_center + Eigen::Vector3d(obs.circle_radius, 0, 0);
+      // ✅ NEW: 初始化速度预测相关字段
+      obs.estimated_velocity = Eigen::Vector3d::Zero();
+      obs.position_history.clear();
+      obs.predicted_trajectory.clear();
       
       obstacles_.push_back(obs);
     }
     
-    // 3. 钟摆运动障碍物
+    // 3. 钟摆运动障碍物 - 分布在地图上下区域
     for (int i = 0; i < num_pendulum; i++) {
       DynamicObstacle obs;
       obs.id = id++;
       obs.motion_type = PENDULUM;
       obs.radius = 0.45;
-      obs.height = 2.2;
-      obs.speed = 0.4 + 0.1 * i;  // 降低摆动频率: 0.4-0.5 Hz
+      obs.height = 3.6;  // 高度提升: 2.2 -> 3.6m
+      obs.speed = 0.25 + 0.05 * i;  // 摆动频率: 0.25-0.45 Hz (峰值速度≈0.6-1.0m/s)
       obs.time_offset = i * 1.5;
       
-      obs.start_pos = Eigen::Vector3d(-10 + i * 5, 0, 0.0);
+      if (i == 0) {
+        // 上部区域 - X轴摆动
+        obs.start_pos = Eigen::Vector3d((map_x_min_ + map_x_max_) * 0.5, 
+                                        map_y_max_ - 8, 
+                                        0.0);
+        obs.pendulum_axis = Eigen::Vector3d(1, 0, 0);
+      } else {
+        // 下部区域 - Y轴摆动
+        obs.start_pos = Eigen::Vector3d(map_x_min_ + map_width * 0.65, 
+                                        map_y_min_ + 8, 
+                                        0.0);
+        obs.pendulum_axis = Eigen::Vector3d(0, 1, 0);
+      }
       obs.pendulum_amplitude = 4.0;
-      obs.pendulum_axis = (i % 2 == 0) ? Eigen::Vector3d(1, 0, 0) : Eigen::Vector3d(0, 1, 0);
       obs.position = obs.start_pos;
+      // ✅ NEW: 初始化速度预测相关字段
+      obs.estimated_velocity = Eigen::Vector3d::Zero();
+      obs.position_history.clear();
+      obs.predicted_trajectory.clear();
       
       obstacles_.push_back(obs);
     }
@@ -197,8 +249,8 @@ public:
       obs.id = id++;
       obs.motion_type = RANDOM_WALK;
       obs.radius = 0.5;
-      obs.height = 2.3;
-      obs.speed = 0.5;  // 降低速度: 0.5 m/s
+      obs.height = 3.7;  // 高度提升: 2.3 -> 3.7m
+      obs.speed = 0.35;  // 速度: 0.35 m/s (远低于无人机)
       obs.time_offset = 0;
       
       obs.start_pos = Eigen::Vector3d(
@@ -209,6 +261,10 @@ public:
       obs.position = obs.start_pos;
       obs.random_target = generateRandomTarget();
       obs.change_target_time = 0;
+      // ✅ NEW: 初始化速度预测相关字段
+      obs.estimated_velocity = Eigen::Vector3d::Zero();
+      obs.position_history.clear();
+      obs.predicted_trajectory.clear();
       
       obstacles_.push_back(obs);
     }
@@ -234,6 +290,10 @@ public:
     // 更新每个障碍物的位置
     for (auto& obs : obstacles_) {
       updateObstaclePosition(obs, current_time);
+      // ✅ NEW: 更新位置历史和估计速度
+      updatePositionHistory(obs);
+      estimateVelocity(obs);
+      predictTrajectory(obs);
     }
     
     // 发布点云
@@ -244,6 +304,9 @@ public:
     
     // 发布速度向量
     publishVelocities();
+    
+    // ✅ NEW: 发布预测轨迹
+    publishPredictedPaths();
   }
   
   void updateObstaclePosition(DynamicObstacle& obs, double t) {
@@ -458,6 +521,147 @@ public:
     }
     
     velocity_pub_.publish(vel_array);
+  }
+  
+  // ✅ NEW: CERLAB-inspired velocity prediction functions
+  
+  /**
+   * @brief 更新障碍物的位置历史
+   * @param obs 动态障碍物引用
+   */
+  void updatePositionHistory(DynamicObstacle& obs) {
+    obs.position_history.push_back(obs.position);
+    // 保持历史大小在HISTORY_SIZE以内
+    if (obs.position_history.size() > obs.HISTORY_SIZE) {
+      obs.position_history.erase(obs.position_history.begin());
+    }
+  }
+  
+  /**
+   * @brief 从位置历史估计速度（类似CERLAB的DODT算法）
+   * @param obs 动态障碍物引用
+   */
+  void estimateVelocity(DynamicObstacle& obs) {
+    if (obs.position_history.size() < 2) {
+      obs.estimated_velocity = obs.velocity;  // 使用真实速度作为初始值
+      return;
+    }
+    
+    // 使用最近N帧的线性回归来估计速度（减少噪声）
+    int window_size = std::min(5, (int)obs.position_history.size());
+    Eigen::Vector3d velocity_sum = Eigen::Vector3d::Zero();
+    int count = 0;
+    
+    for (int i = obs.position_history.size() - window_size; i < obs.position_history.size() - 1; ++i) {
+      Eigen::Vector3d vel = (obs.position_history[i + 1] - obs.position_history[i]) * update_rate_;
+      velocity_sum += vel;
+      count++;
+    }
+    
+    if (count > 0) {
+      obs.estimated_velocity = velocity_sum / count;
+    } else {
+      obs.estimated_velocity = obs.velocity;
+    }
+  }
+  
+  /**
+   * @brief 预测障碍物未来轨迹（CERLAB风格：0.5-2秒预测窗口）
+   * @param obs 动态障碍物引用
+   */
+  void predictTrajectory(DynamicObstacle& obs) {
+    obs.predicted_trajectory.clear();
+    
+    // 预测参数
+    const double prediction_horizon = 2.0;  // 2秒预测窗口
+    const double prediction_dt = 0.1;       // 10Hz预测采样
+    int prediction_steps = (int)(prediction_horizon / prediction_dt);
+    
+    Eigen::Vector3d predicted_pos = obs.position;
+    Eigen::Vector3d predicted_vel = obs.estimated_velocity;
+    
+    // 根据运动类型选择预测模型
+    for (int step = 0; step < prediction_steps; ++step) {
+      double future_time = step * prediction_dt;
+      
+      switch (obs.motion_type) {
+        case LINEAR:
+        case RANDOM_WALK: {
+          // 恒速模型（Constant Velocity Model）
+          predicted_pos = obs.position + predicted_vel * future_time;
+          break;
+        }
+        case CIRCULAR: {
+          // 圆周运动预测（使用角速度）
+          double angular_vel = obs.speed / obs.circle_radius;
+          double current_angle = atan2(obs.position.y() - obs.circle_center.y(),
+                                      obs.position.x() - obs.circle_center.x());
+          double future_angle = current_angle + angular_vel * future_time;
+          
+          predicted_pos.x() = obs.circle_center.x() + obs.circle_radius * cos(future_angle);
+          predicted_pos.y() = obs.circle_center.y() + obs.circle_radius * sin(future_angle);
+          predicted_pos.z() = obs.circle_center.z();
+          break;
+        }
+        case PENDULUM: {
+          // 简化的周期运动预测
+          double t = (ros::Time::now().toSec() - start_time_ + obs.time_offset + future_time);
+          predicted_pos = obs.start_pos + obs.pendulum_axis * (obs.pendulum_amplitude * sin(obs.speed * t));
+          break;
+        }
+        case STATIONARY: {
+          predicted_pos = obs.position;
+          break;
+        }
+      }
+      
+      obs.predicted_trajectory.push_back(predicted_pos);
+    }
+  }
+  
+  /**
+   * @brief 发布预测轨迹可视化
+   */
+  void publishPredictedPaths() {
+    visualization_msgs::MarkerArray path_array;
+    
+    for (const auto& obs : obstacles_) {
+      if (obs.predicted_trajectory.empty()) continue;
+      
+      // 为每个障碍物创建轨迹线
+      visualization_msgs::Marker trajectory_line;
+      trajectory_line.header.frame_id = "world";
+      trajectory_line.header.stamp = ros::Time::now();
+      trajectory_line.ns = "predicted_trajectories";
+      trajectory_line.id = obs.id;
+      trajectory_line.type = visualization_msgs::Marker::LINE_STRIP;
+      trajectory_line.action = visualization_msgs::Marker::ADD;
+      trajectory_line.pose.orientation.w = 1.0;
+      
+      trajectory_line.scale.x = 0.05;  // 线宽
+      
+      // 颜色：从绿色（近）到红色（远）渐变
+      for (size_t i = 0; i < obs.predicted_trajectory.size(); ++i) {
+        geometry_msgs::Point p;
+        p.x = obs.predicted_trajectory[i].x();
+        p.y = obs.predicted_trajectory[i].y();
+        p.z = obs.predicted_trajectory[i].z() + obs.height / 2.0;
+        trajectory_line.points.push_back(p);
+        
+        std_msgs::ColorRGBA color;
+        float ratio = (float)i / obs.predicted_trajectory.size();
+        color.r = ratio;           // 红色分量随时间增加
+        color.g = 1.0 - ratio;     // 绿色分量随时间减少
+        color.b = 0.3;
+        color.a = 0.7;
+        trajectory_line.colors.push_back(color);
+      }
+      
+      trajectory_line.lifetime = ros::Duration(0.2);
+      path_array.markers.push_back(trajectory_line);
+    }
+    
+    predicted_path_pub_.publish(path_array);
   }
 };
 

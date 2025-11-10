@@ -354,7 +354,7 @@ namespace ego_planner
       check_collision_and_rebound();
     }
 
-    /*** calculate distance cost and gradient ***/
+    /*** calculate static distance cost and gradient ***/
     for (auto i = order_; i < end_idx; ++i)
     {
       for (size_t j = 0; j < cps_.direction[i].size(); ++j)
@@ -377,6 +377,88 @@ namespace ego_planner
           cost += a * dist_err * dist_err + b * dist_err + c;
           gradient.col(i) += -(2.0 * a * dist_err + b) * dist_grad;
         }
+      }
+    }
+
+    /*** 🚀 Phase 3: Add dynamic obstacle distance cost ***/
+    // For each control point, calculate the time it will be reached and check dynamic obstacles
+    int dynamic_cost_count = 0;
+    double total_dynamic_cost = 0.0;
+    for (auto i = order_; i < end_idx; ++i)
+    {
+      // Calculate the time when this control point is reached
+      // time_from_now = (i - order_) * bspline_interval_
+      // This is an approximation: assuming uniform time distribution along control points
+      double time_from_now = (i - order_) * bspline_interval_;
+      
+      // Get dynamic obstacle distance at future time
+      double dynamic_dist = grid_map_->getDynamicDistance(cps_.points.col(i), time_from_now);
+      
+      // Only apply cost if there are valid dynamic obstacles nearby
+      if (dynamic_dist > 0.0 && dynamic_dist < 3.0 * cps_.clearance) // Only consider obstacles within 3x clearance
+      {
+        // 动态障碍物使用更大的安全距离（1.5倍），因为预测存在不确定性
+        double dynamic_clearance = cps_.clearance * 1.5;
+        double dist_err = dynamic_clearance - dynamic_dist;
+        
+        if (dist_err > 0) // Only penalize if too close
+        {
+          double point_cost = 0.0;
+          // Calculate numerical gradient for dynamic obstacles
+          // Use finite difference method since we don't have analytical gradient
+          const double eps = 0.01; // 1cm perturbation
+          Eigen::Vector3d dynamic_grad;
+          
+          for (int axis = 0; axis < 3; ++axis)
+          {
+            Eigen::Vector3d pos_plus = cps_.points.col(i);
+            Eigen::Vector3d pos_minus = cps_.points.col(i);
+            pos_plus(axis) += eps;
+            pos_minus(axis) -= eps;
+            
+            double dist_plus = grid_map_->getDynamicDistance(pos_plus, time_from_now);
+            double dist_minus = grid_map_->getDynamicDistance(pos_minus, time_from_now);
+            
+            // Gradient points away from obstacle (toward safer region)
+            dynamic_grad(axis) = (dist_plus - dist_minus) / (2.0 * eps);
+          }
+          
+          // Normalize gradient if it's not zero
+          if (dynamic_grad.norm() > 1e-6)
+          {
+            dynamic_grad.normalize();
+          }
+          
+          // Apply the same cost function as static obstacles
+          if (dist_err < demarcation)
+          {
+            point_cost = pow(dist_err, 3);
+            cost += point_cost;
+            gradient.col(i) += -3.0 * dist_err * dist_err * dynamic_grad;
+          }
+          else
+          {
+            point_cost = a * dist_err * dist_err + b * dist_err + c;
+            cost += point_cost;
+            gradient.col(i) += -(2.0 * a * dist_err + b) * dynamic_grad;
+          }
+          
+          dynamic_cost_count++;
+          total_dynamic_cost += point_cost;
+        }
+      }
+    }
+    
+    // 添加诊断日志：当动态障碍物影响优化时输出
+    if (dynamic_cost_count > 0) {
+      ROS_INFO_THROTTLE(1.0, "[BsplineOpt] 🚨 Dynamic obstacles affecting %d control points, total cost=%.3f", 
+                        dynamic_cost_count, total_dynamic_cost);
+    } else {
+      // 检查是否检测到但未产生成本
+      static int check_counter = 0;
+      if (++check_counter % 50 == 0) { // 每50次检查输出一次
+        ROS_DEBUG("[BsplineOpt] No dynamic cost (obstacles may be far enough, clearance=%.2f, safe_dist=%.2fm)", 
+                  cps_.clearance, cps_.clearance * 1.5);
       }
     }
   }

@@ -270,6 +270,14 @@ Visualization Manager:
             {}
           Queue Size: 100
           Value: true
+        - Class: rviz/MarkerArray
+          Enabled: true
+          Marker Topic: /dynamic_obstacles/predicted_paths
+          Name: predicted_trajectories
+          Namespaces:
+            {}
+          Queue Size: 100
+          Value: true
       Enabled: true
       Name: Mapping
     - Class: rviz/Group
