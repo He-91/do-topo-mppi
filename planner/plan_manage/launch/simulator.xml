@@ -96,6 +96,8 @@
         <!-- 重要：订阅融合后的点云（静态+动态） -->
         <remap from="~global_map" to="/merged_global_map"/>
         <remap from="~odometry"   to="$(arg odometry_topic)"/>
+        <!-- 修复：CUDA版本的pcl_render_node发布到rendered_pcl，需要remap到cloud -->
+        <remap from="~rendered_pcl" to="~cloud"/>
   </node>
 
 </launch>
