@@ -374,8 +374,11 @@ namespace ego_planner
                     visualizeTopoMPPIPaths(best_idx, mppi_candidates[best_idx].topo_path,
                                           mppi_candidates[best_idx].mppi_result, true);
                     
+                    // 🚀 IMPROVED: Backup MPPI result for potential B-spline fallback
+                    mppi_result_backup_ = mppi_candidates[best_idx].mppi_result;
+                    
                     // Use MPPI-optimized trajectory directly
-                    point_set = mppi_candidates[best_idx].mppi_result.positions;
+                    point_set = mppi_result_backup_.positions;
                     UniformBspline::parameterizeToBspline(ts, point_set, start_end_derivatives, ctrl_pts);
                     use_mppi_topo_path = true;
                     
@@ -495,10 +498,24 @@ namespace ego_planner
     
     if (!flag_step_1_success)
     {
-      ROS_WARN("[PlannerManager]   ⚠️ B-spline failed - this should be rare (TOPO/MPPI should avoid obstacles)");
-      // visualization_->displayOptimalList( ctrl_pts, vis_id );
-      continous_failures_count_++;
-      return false;
+      ROS_WARN("[PlannerManager]   ⚠️ B-spline failed - using MPPI trajectory as fallback");
+      
+      // 🚀 IMPROVED: Use MPPI trajectory directly instead of failing
+      if (mppi_result_backup_.positions.size() >= 3) {
+        ROS_INFO("[PlannerManager]   📦 Fallback: Using MPPI trajectory (%zu points)", mppi_result_backup_.positions.size());
+        
+        // Use MPPI trajectory as-is
+        point_set = mppi_result_backup_.positions;
+        UniformBspline::parameterizeToBspline(ts, point_set, start_end_derivatives, ctrl_pts);
+        
+        // Mark as success with fallback
+        flag_step_1_success = true;
+        ROS_INFO("[PlannerManager]   ✅ Fallback succeeded, continuing with MPPI path");
+      } else {
+        ROS_WARN("[PlannerManager]   ❌ No MPPI backup available, planning failed");
+        continous_failures_count_++;
+        return false;
+      }
     }
     ROS_WARN("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     //visualization_->displayOptimalList( ctrl_pts, vis_id );

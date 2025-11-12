@@ -215,19 +215,19 @@ vector<Vector3d> TopoPRM::sampleFreeSpaceInEllipsoid(const Vector3d& start,
     }
     
     // 🚀 OPTIMIZED: 添加障碍边缘采样
-    int edge_samples = min(50, (int)rejected_points.size());  // 最多50个边缘采样
-    for (int i = 0; i < edge_samples; ++i) {
-        Vector3d obs_center = rejected_points[i];
-        // 生成切线点
-        vector<Vector3d> tangents = generateTangentPoints(start, goal, obs_center);
-        for (const auto& tangent : tangents) {
-            if (isPointFree(tangent, clearance_)) {
-                free_points.push_back(tangent);
-            }
-        }
-    }
+    // TODO: generateTangentPoints函数暂未实现，先注释掉
+    // int edge_samples = min(50, (int)rejected_points.size());  // 最多50个边缘采样
+    // for (int i = 0; i < edge_samples; ++i) {
+    //     Vector3d obs_center = rejected_points[i];
+    //     vector<Vector3d> tangents = generateTangentPoints(start, goal, obs_center);
+    //     for (const auto& tangent : tangents) {
+    //         if (isPointFree(tangent, clearance_)) {
+    //             free_points.push_back(tangent);
+    //         }
+    //     }
+    // }
     
-    ROS_DEBUG("[TopoPRM] 椭球采样: %d 次尝试, %d 个有效点 (+%d 边缘采样)", attempts, valid_count, edge_samples);
+    ROS_DEBUG("[TopoPRM] 椭球采样: %d 次尝试, %d 个有效点", attempts, valid_count);
     
     return free_points;
 }
@@ -692,9 +692,142 @@ double TopoPRM::pathLength(const vector<Vector3d>& path) {
 }
 
 // ============================================================================
-// NOTE: Shared utility functions (isPathValid, calculatePathCost, etc.) 
-// are defined within the #if 1 block above and used by both TGK and Legacy.
-// No need to duplicate them here.
+// Utility functions implementation
 // ============================================================================
+
+bool TopoPRM::isLineCollisionFree(const Vector3d& start, const Vector3d& end) {
+    Vector3d dir = end - start;
+    double dist = dir.norm();
+    if (dist < 1e-6) return true;
+    
+    dir.normalize();
+    
+    for (double t = 0; t <= dist; t += collision_check_resolution_) {
+        Vector3d point = start + t * dir;
+        if (grid_map_->getInflateOccupancy(point)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+double TopoPRM::calculatePathCost(const vector<Vector3d>& path) {
+    if (path.size() < 2) return std::numeric_limits<double>::max();
+    
+    double length_cost = 0.0;
+    for (size_t i = 0; i < path.size() - 1; ++i) {
+        length_cost += (path[i + 1] - path[i]).norm();
+    }
+    
+    double smoothness_cost = calculateSmoothnessCost(path);
+    double obstacle_cost = calculateObstacleCost(path);
+    
+    return length_cost + 2.0 * smoothness_cost + 5.0 * obstacle_cost;
+}
+
+double TopoPRM::calculateSmoothnessCost(const vector<Vector3d>& path) {
+    if (path.size() < 3) return 0.0;
+    
+    double smoothness_cost = 0.0;
+    for (size_t i = 1; i < path.size() - 1; ++i) {
+        Vector3d v1 = (path[i] - path[i - 1]).normalized();
+        Vector3d v2 = (path[i + 1] - path[i]).normalized();
+        double angle = acos(std::max(-1.0, std::min(1.0, v1.dot(v2))));
+        smoothness_cost += angle;
+    }
+    return smoothness_cost;
+}
+
+double TopoPRM::calculateObstacleCost(const vector<Vector3d>& path) {
+    double obstacle_cost = 0.0;
+    
+    for (const auto& point : path) {
+        // Check distance to nearest obstacle
+        double min_dist = std::numeric_limits<double>::max();
+        
+        // Sample around the point to find nearest obstacle
+        for (double dx = -search_radius_; dx <= search_radius_; dx += step_size_) {
+            for (double dy = -search_radius_; dy <= search_radius_; dy += step_size_) {
+                for (double dz = -search_radius_; dz <= search_radius_; dz += step_size_) {
+                    Vector3d sample = point + Vector3d(dx, dy, dz);
+                    if (grid_map_->getInflateOccupancy(sample)) {
+                        double dist = Vector3d(dx, dy, dz).norm();
+                        min_dist = std::min(min_dist, dist);
+                    }
+                }
+            }
+        }
+        
+        if (min_dist < search_radius_) {
+            obstacle_cost += 1.0 / (min_dist + 0.1);
+        }
+    }
+    
+    return obstacle_cost;
+}
+
+TopoPath TopoPRM::selectBestPath(const vector<TopoPath>& paths) {
+    if (paths.empty()) {
+        return TopoPath();
+    }
+    
+    // Return the path with minimum cost
+    auto best_it = std::min_element(paths.begin(), paths.end(),
+        [](const TopoPath& a, const TopoPath& b) {
+            return a.cost < b.cost;
+        });
+    
+    return *best_it;
+}
+
+void TopoPRM::visualizeTopoPaths(const vector<TopoPath>& paths) {
+    ROS_INFO("[TopoPRM] Visualizing %zu topological paths with frame_id: %s", paths.size(), frame_id_.c_str());
+    
+    visualization_msgs::MarkerArray marker_array;
+    
+    // Clear previous markers
+    visualization_msgs::Marker clear_marker;
+    clear_marker.header.frame_id = frame_id_;
+    clear_marker.header.stamp = ros::Time::now();
+    clear_marker.action = visualization_msgs::Marker::DELETEALL;
+    marker_array.markers.push_back(clear_marker);
+    
+    // Visualize each path with different colors
+    for (size_t i = 0; i < paths.size() && i < 10; ++i) {
+        visualization_msgs::Marker line_marker;
+        line_marker.header.frame_id = frame_id_;
+        line_marker.header.stamp = ros::Time::now();
+        line_marker.ns = "topo_paths";
+        line_marker.id = i;
+        line_marker.type = visualization_msgs::Marker::LINE_STRIP;
+        line_marker.action = visualization_msgs::Marker::ADD;
+        line_marker.pose.orientation.w = 1.0;
+        
+        // Different colors for different paths
+        if (i == 0) {
+            line_marker.color.r = 1.0; line_marker.color.g = 0.0; line_marker.color.b = 0.0;
+        } else if (i == 1) {
+            line_marker.color.r = 0.0; line_marker.color.g = 1.0; line_marker.color.b = 0.0;
+        } else if (i == 2) {
+            line_marker.color.r = 0.0; line_marker.color.g = 0.0; line_marker.color.b = 1.0;
+        } else {
+            line_marker.color.r = 1.0; line_marker.color.g = 0.5; line_marker.color.b = 0.0;
+        }
+        line_marker.color.a = 0.9;
+        line_marker.scale.x = 0.15;
+        
+        for (const auto& point : paths[i].path) {
+            geometry_msgs::Point p;
+            p.x = point.x();
+            p.y = point.y();
+            p.z = point.z();
+            line_marker.points.push_back(p);
+        }
+        
+        marker_array.markers.push_back(line_marker);
+    }
+    
+    topo_paths_pub_.publish(marker_array);
+}
 
 } // namespace ego_planner

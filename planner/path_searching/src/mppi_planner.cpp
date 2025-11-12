@@ -12,7 +12,7 @@ MPPIPlanner::MPPIPlanner()
     : num_samples_(1000), num_samples_min_(500), num_samples_max_(2000),
       use_adaptive_sampling_(true), horizon_steps_(20), dt_(0.1), lambda_(1.0),
       sigma_pos_(0.2), sigma_vel_(0.5), sigma_acc_(1.0),
-      w_obstacle_(100.0), w_smoothness_(10.0), w_goal_(50.0), w_velocity_(20.0),
+      w_obstacle_(200.0), w_dynamic_(1.5), w_smoothness_(10.0), w_goal_(50.0), w_velocity_(20.0),  // 🚀 IMPROVED: 100→200, added w_dynamic_
       max_velocity_(3.0), max_acceleration_(3.0),
       generator_(std::random_device{}()), normal_dist_(0.0, 1.0) {
 }
@@ -316,16 +316,29 @@ double MPPIPlanner::calculateTrajectoryCost(const MPPITrajectory& trajectory,
     
     // Early exit optimization: check collision along trajectory
     for (int t = 0; t < trajectory.size(); ++t) {
-        // ✅ Phase 3: Use ESDF for O(1) obstacle distance query
-        double dist = grid_map_->getDistance(trajectory.positions[t]);
+        // ✅ Static obstacle cost (ESDF O(1) query)
+        double static_dist = grid_map_->getDistance(trajectory.positions[t]);
         
-        // Early exit if collision detected - no need to compute further
-        if (dist < 0.0) {
+        // Early exit if static collision detected
+        if (static_dist < 0.0) {
             return std::numeric_limits<double>::max();
         }
         
-        // Obstacle cost - exponentially increase as we get closer
-        total_cost += w_obstacle_ * obstacleCost(trajectory.positions[t], dist);
+        // ✅ 🚀 NEW: Dynamic obstacle cost (time-aware)
+        // Calculate time from now for this trajectory point
+        double time_from_now = t * dt_;  // dt_ = 0.1s, so t=10 → 1.0s future
+        double dynamic_dist = grid_map_->getDynamicDistance(trajectory.positions[t], time_from_now);
+        
+        // Early exit if dynamic collision detected
+        if (dynamic_dist < 0.3) {  // 0.3m safety margin for dynamic obstacles
+            return std::numeric_limits<double>::max();
+        }
+        
+        // Combined obstacle cost (static + dynamic)
+        // Dynamic obstacles use higher weight (w_dynamic_) due to prediction uncertainty
+        double static_cost = w_obstacle_ * obstacleCost(trajectory.positions[t], static_dist);
+        double dynamic_cost = w_obstacle_ * w_dynamic_ * obstacleCost(trajectory.positions[t], dynamic_dist);
+        total_cost += static_cost + dynamic_cost;
         
         // Early exit if cost already too high (optimization)
         if (total_cost > 1e6) {

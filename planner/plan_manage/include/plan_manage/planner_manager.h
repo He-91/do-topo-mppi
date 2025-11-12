@@ -82,6 +82,9 @@ namespace ego_planner
     /* New topological and MPPI planning modules */
     TopoPRM::Ptr topo_planner_;
     MPPIPlanner::Ptr mppi_planner_;
+    
+    /* 🚀 IMPROVED: Backup MPPI result for B-spline fallback */
+    MPPITrajectory mppi_result_backup_;
 
     /* Visualization for TOPO+MPPI combined paths */
     ros::Publisher topo_mppi_vis_pub_;

@@ -54,6 +54,7 @@ private:
     
     // Cost weights
     double w_obstacle_;        // Obstacle avoidance weight
+    double w_dynamic_;         // Dynamic obstacle weight multiplier (relative to w_obstacle_)
     double w_smoothness_;      // Smoothness weight
     double w_goal_;           // Goal reaching weight
     double w_velocity_;       // Velocity tracking weight
