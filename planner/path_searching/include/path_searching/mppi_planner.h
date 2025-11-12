@@ -42,7 +42,7 @@ private:
     
     // MPPI parameters
     int num_samples_;          // Number of rollout samples (default: 1000)
-    int num_samples_min_;      // Minimum samples for adaptive sampling (default: 500)
+    int num_samples_min_;      // Minimum samples for adaptive sampling (default: 1000, upgraded from 500)
     int num_samples_max_;      // Maximum samples for adaptive sampling (default: 2000)
     bool use_adaptive_sampling_; // Enable adaptive sampling based on environment complexity
     int horizon_steps_;        // Planning horizon steps

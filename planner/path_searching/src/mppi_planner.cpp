@@ -10,7 +10,7 @@ using namespace Eigen;
 namespace ego_planner {
 
 MPPIPlanner::MPPIPlanner() 
-    : num_samples_(1000), num_samples_min_(500), num_samples_max_(2000),
+    : num_samples_(1000), num_samples_min_(1000), num_samples_max_(2000),
       use_adaptive_sampling_(true), horizon_steps_(20), dt_(0.1), lambda_(1.0),
       sigma_pos_(0.2), sigma_vel_(0.5), sigma_acc_(1.0),
       w_obstacle_(200.0), w_dynamic_(1.5), w_smoothness_(10.0), w_goal_(50.0), w_velocity_(20.0),  // 🚀 IMPROVED: 100→200, added w_dynamic_
