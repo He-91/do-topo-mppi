@@ -3,6 +3,7 @@
 #include <path_searching/topo_prm.h>
 #include <path_searching/mppi_planner.h>
 #include <thread>
+#include <omp.h>
 
 namespace ego_planner
 {
@@ -291,16 +292,16 @@ namespace ego_planner
                     bool success;
                 };
                 
-                std::vector<MPPICandidate> mppi_candidates;
+                std::vector<MPPICandidate> mppi_candidates(topo_paths.size());
                 Eigen::Vector3d current_vel = start_vel;
                 Eigen::Vector3d target_vel = local_target_vel;
                 
-                // Optimize each topological path with MPPI
+                // 🚀 Optimize each topological path with MPPI in PARALLEL
+                #pragma omp parallel for schedule(dynamic)
                 for (size_t i = 0; i < topo_paths.size(); ++i) {
-                    MPPICandidate candidate;
-                    candidate.topo_path = topo_paths[i];
-                    candidate.success = false;
-                    candidate.normalized_cost = std::numeric_limits<double>::max();
+                    mppi_candidates[i].topo_path = topo_paths[i];
+                    mppi_candidates[i].success = false;
+                    mppi_candidates[i].normalized_cost = std::numeric_limits<double>::max();
                     
                     // Densify path if needed (for MPPI initial trajectory)
                     std::vector<Eigen::Vector3d> dense_path = topo_paths[i].path;
@@ -327,30 +328,32 @@ namespace ego_planner
                     // ✅ FIX: Pass dense_path to guide MPPI optimization
                     bool mppi_success = mppi_planner_->planTrajectory(start_pt, current_vel, 
                                                                      local_target_pt, target_vel, 
-                                                                     dense_path, candidate.mppi_result);
+                                                                     dense_path, mppi_candidates[i].mppi_result);
                     
-                    if (mppi_success && candidate.mppi_result.positions.size() >= 7) {
+                    if (mppi_success && mppi_candidates[i].mppi_result.positions.size() >= 7) {
                         // Calculate normalized cost (cost per unit length)
                         double path_length = 0.0;
-                        for (size_t j = 1; j < candidate.mppi_result.positions.size(); ++j) {
-                            path_length += (candidate.mppi_result.positions[j] - candidate.mppi_result.positions[j-1]).norm();
+                        for (size_t j = 1; j < mppi_candidates[i].mppi_result.positions.size(); ++j) {
+                            path_length += (mppi_candidates[i].mppi_result.positions[j] - mppi_candidates[i].mppi_result.positions[j-1]).norm();
                         }
-                        candidate.normalized_cost = (path_length > 0.1) ? (candidate.mppi_result.cost / path_length) : candidate.mppi_result.cost;
-                        candidate.success = true;
+                        mppi_candidates[i].normalized_cost = (path_length > 0.1) ? (mppi_candidates[i].mppi_result.cost / path_length) : mppi_candidates[i].mppi_result.cost;
+                        mppi_candidates[i].success = true;
                         
+                        #pragma omp critical
                         ROS_INFO("[PlannerManager]   Path %zu: MPPI ✅ cost=%.3f, norm_cost=%.3f, length=%.2fm", 
-                                 i+1, candidate.mppi_result.cost, candidate.normalized_cost, path_length);
+                                 i+1, mppi_candidates[i].mppi_result.cost, mppi_candidates[i].normalized_cost, path_length);
                     } else {
+                        #pragma omp critical
                         ROS_WARN("[PlannerManager]   Path %zu: MPPI ❌ failed", i+1);
                         // Use topo path as fallback for visualization
-                        candidate.mppi_result.positions = dense_path;
-                        candidate.mppi_result.cost = topo_paths[i].cost;
+                        mppi_candidates[i].mppi_result.positions = dense_path;
+                        mppi_candidates[i].mppi_result.cost = topo_paths[i].cost;
                     }
-                    
-                    // 🎨 Visualize ALL paths (success or failed)
-                    visualizeTopoMPPIPaths(i, topo_paths[i], candidate.mppi_result, false);
-                    
-                    mppi_candidates.push_back(candidate);
+                }
+                
+                // 🎨 Visualize ALL paths after parallel optimization
+                for (size_t i = 0; i < topo_paths.size(); ++i) {
+                    visualizeTopoMPPIPaths(i, topo_paths[i], mppi_candidates[i].mppi_result, false);
                 }
                 
                 // Select best MPPI result based on normalized cost

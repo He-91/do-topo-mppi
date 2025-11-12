@@ -6,6 +6,14 @@ ADD_COMPILE_OPTIONS(-std=c++11 )
 ADD_COMPILE_OPTIONS(-std=c++14 )
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -Wall -g")
 
+# 🚀 Enable OpenMP for parallel optimization
+find_package(OpenMP REQUIRED)
+if(OPENMP_FOUND)
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+  message(STATUS "OpenMP found, parallel optimization enabled")
+endif()
+
 find_package(Eigen3 REQUIRED)
 find_package(PCL 1.7 REQUIRED)
 
