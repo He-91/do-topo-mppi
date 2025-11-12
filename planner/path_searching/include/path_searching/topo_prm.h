@@ -61,7 +61,7 @@ private:
     // 🚀 P0 NEW: DFS超时控制
     std::chrono::steady_clock::time_point dfs_start_time_;
     bool dfs_timeout_flag_;
-    const double MAX_DFS_TIME_MS = 200.0;  // ✅ UPGRADED: 200ms超时(K=28图复杂度增加,需更多搜索时间)
+    const double MAX_DFS_TIME_MS = 400.0;  // Increased to 400ms to allow more search time in complex graphs
     
     // Shared utility functions
     bool isPathValid(const std::vector<Eigen::Vector3d>& path);
@@ -99,33 +99,9 @@ private:
     std::vector<std::vector<Eigen::Vector3d>> selectShortPaths(
         const std::vector<std::vector<Eigen::Vector3d>>& paths);
     
-    // Legacy 4-direction topological path generation
-    std::vector<TopoPath> findTopoPathsLegacy(const Eigen::Vector3d& start, 
-                                              const Eigen::Vector3d& goal);
-    
-    // Four-directional obstacle avoidance (legacy)
-    std::vector<Eigen::Vector3d> generateAlternativePath(const Eigen::Vector3d& start,
-                                                        const Eigen::Vector3d& goal,
-                                                        const Eigen::Vector3d& obstacle_center,
-                                                        int direction); // 0=up, 1=down, 2=left, 3=right
-    
-    // Fast-Planner inspired path generation methods
-    std::vector<Eigen::Vector3d> generateCircularPath(const Eigen::Vector3d& start,
-                                                     const Eigen::Vector3d& goal,
-                                                     const Eigen::Vector3d& obstacle_center,
-                                                     int side); // -1=left, 1=right
-    
-    std::vector<Eigen::Vector3d> generateVerticalPath(const Eigen::Vector3d& start,
-                                                     const Eigen::Vector3d& goal,
-                                                     const Eigen::Vector3d& obstacle_center,
-                                                     int vertical); // -1=under, 1=over
-    
-    std::vector<Eigen::Vector3d> generateTangentPoints(const Eigen::Vector3d& start,
-                                                      const Eigen::Vector3d& goal,
-                                                      const Eigen::Vector3d& obstacle_center);
-    
-    // 🚀 NEW: Dynamic obstacle size estimation
-    double estimateObstacleSize(const Eigen::Vector3d& obstacle_center);
+    // Legacy functions removed (2025-11-12) - no longer needed after parameter optimization
+    // Removed: findTopoPathsLegacy, generateAlternativePath, generateCircularPath, 
+    //          generateVerticalPath, generateTangentPoints, estimateObstacleSize
     
     // Cost calculation
     double calculatePathCost(const std::vector<Eigen::Vector3d>& path);
