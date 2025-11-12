@@ -81,6 +81,24 @@ private:
                           const std::vector<Eigen::Vector3d>& guide_path,
                           MPPITrajectory& trajectory);
     
+    // 🚀 Thread-safe rollout functions for OpenMP parallel execution
+    void rolloutTrajectory(const Eigen::Vector3d& start_pos,
+                          const Eigen::Vector3d& start_vel,
+                          const Eigen::Vector3d& goal_pos,
+                          const Eigen::Vector3d& goal_vel,
+                          MPPITrajectory& trajectory,
+                          std::mt19937& local_gen,
+                          std::normal_distribution<double>& local_dist);
+    
+    void rolloutTrajectory(const Eigen::Vector3d& start_pos,
+                          const Eigen::Vector3d& start_vel,
+                          const Eigen::Vector3d& goal_pos,
+                          const Eigen::Vector3d& goal_vel,
+                          const std::vector<Eigen::Vector3d>& guide_path,
+                          MPPITrajectory& trajectory,
+                          std::mt19937& local_gen,
+                          std::normal_distribution<double>& local_dist);
+    
     double calculateTrajectoryCost(const MPPITrajectory& trajectory,
                                   const Eigen::Vector3d& goal_pos,
                                   const Eigen::Vector3d& goal_vel);

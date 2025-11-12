@@ -2,6 +2,7 @@
 #include <cmath>
 #include <algorithm>
 #include <numeric>
+#include <omp.h>
 
 using namespace std;
 using namespace Eigen;
@@ -48,16 +49,24 @@ bool MPPIPlanner::planTrajectory(const Vector3d& start_pos,
     vector<MPPITrajectory> trajectories(adaptive_samples);
     double min_cost = std::numeric_limits<double>::max();
     
-    // Generate rollout trajectories
-    for (int i = 0; i < adaptive_samples; ++i) {
-        trajectories[i].resize(horizon_steps_);
-        rolloutTrajectory(start_pos, start_vel, goal_pos, goal_vel, trajectories[i]);
+    // 🚀 Generate rollout trajectories in PARALLEL
+    #pragma omp parallel
+    {
+        // Thread-local random number generator for thread safety
+        std::mt19937 local_gen(generator_() + omp_get_thread_num());
+        std::normal_distribution<double> local_dist(0.0, 1.0);
         
-        double cost = calculateTrajectoryCost(trajectories[i], goal_pos, goal_vel);
-        trajectories[i].cost = cost;
-        
-        if (cost < min_cost) {
-            min_cost = cost;
+        #pragma omp for reduction(min:min_cost)
+        for (int i = 0; i < adaptive_samples; ++i) {
+            trajectories[i].resize(horizon_steps_);
+            rolloutTrajectory(start_pos, start_vel, goal_pos, goal_vel, trajectories[i], local_gen, local_dist);
+            
+            double cost = calculateTrajectoryCost(trajectories[i], goal_pos, goal_vel);
+            trajectories[i].cost = cost;
+            
+            if (cost < min_cost) {
+                min_cost = cost;
+            }
         }
     }
     
@@ -110,16 +119,24 @@ bool MPPIPlanner::planTrajectory(const Vector3d& start_pos,
     vector<MPPITrajectory> trajectories(adaptive_samples);
     double min_cost = std::numeric_limits<double>::max();
     
-    // Generate rollout trajectories guided by initial path
-    for (int i = 0; i < adaptive_samples; ++i) {
-        trajectories[i].resize(horizon_steps_);
-        rolloutTrajectory(start_pos, start_vel, goal_pos, goal_vel, initial_path, trajectories[i]);
+    // 🚀 Generate rollout trajectories guided by initial path in PARALLEL
+    #pragma omp parallel
+    {
+        // Thread-local random number generator for thread safety
+        std::mt19937 local_gen(generator_() + omp_get_thread_num());
+        std::normal_distribution<double> local_dist(0.0, 1.0);
         
-        double cost = calculateTrajectoryCost(trajectories[i], goal_pos, goal_vel);
-        trajectories[i].cost = cost;
-        
-        if (cost < min_cost) {
-            min_cost = cost;
+        #pragma omp for reduction(min:min_cost)
+        for (int i = 0; i < adaptive_samples; ++i) {
+            trajectories[i].resize(horizon_steps_);
+            rolloutTrajectory(start_pos, start_vel, goal_pos, goal_vel, initial_path, trajectories[i], local_gen, local_dist);
+            
+            double cost = calculateTrajectoryCost(trajectories[i], goal_pos, goal_vel);
+            trajectories[i].cost = cost;
+            
+            if (cost < min_cost) {
+                min_cost = cost;
+            }
         }
     }
     
@@ -719,6 +736,159 @@ int MPPIPlanner::computeAdaptiveSamples(const Vector3d& start_pos, const Vector3
               avg_clearance, adaptive_samples, num_samples_min_, num_samples_max_);
     
     return adaptive_samples;
+}
+
+// 🚀 Thread-safe rolloutTrajectory with local random generators (for OpenMP)
+void MPPIPlanner::rolloutTrajectory(const Vector3d& start_pos,
+                                   const Vector3d& start_vel,
+                                   const Vector3d& goal_pos,
+                                   const Vector3d& goal_vel,
+                                   MPPITrajectory& trajectory,
+                                   std::mt19937& local_gen,
+                                   std::normal_distribution<double>& local_dist) {
+    // Initialize trajectory
+    trajectory.positions[0] = start_pos;
+    trajectory.velocities[0] = start_vel;
+    trajectory.accelerations[0] = Vector3d::Zero();
+    
+    // Generate noisy control inputs and rollout dynamics
+    for (int t = 1; t < horizon_steps_; ++t) {
+        // Calculate nominal control towards goal
+        Vector3d pos_error = goal_pos - trajectory.positions[t-1];
+        Vector3d vel_error = goal_vel - trajectory.velocities[t-1];
+        
+        // Simple PD control for nominal trajectory
+        Vector3d nominal_acc = 2.0 * pos_error + 1.0 * vel_error;
+        
+        // Add noise to control (using local thread-safe generator)
+        Vector3d noise_acc(
+            sigma_acc_ * local_dist(local_gen),
+            sigma_acc_ * local_dist(local_gen),
+            sigma_acc_ * local_dist(local_gen)
+        );
+        
+        trajectory.accelerations[t] = nominal_acc + noise_acc;
+        
+        // Apply dynamic constraints
+        constrainDynamics(trajectory.velocities[t-1], trajectory.accelerations[t]);
+        
+        // Forward integrate dynamics
+        trajectory.velocities[t] = trajectory.velocities[t-1] + trajectory.accelerations[t] * dt_;
+        trajectory.positions[t] = trajectory.positions[t-1] + trajectory.velocities[t-1] * dt_ + 
+                                 0.5 * trajectory.accelerations[t] * dt_ * dt_;
+        
+        // Add position noise (using local generator)
+        Vector3d pos_noise(
+            sigma_pos_ * local_dist(local_gen),
+            sigma_pos_ * local_dist(local_gen),
+            sigma_pos_ * local_dist(local_gen)
+        );
+        trajectory.positions[t] += pos_noise;
+        
+        // Add velocity noise (using local generator)
+        Vector3d vel_noise(
+            sigma_vel_ * local_dist(local_gen),
+            sigma_vel_ * local_dist(local_gen),
+            sigma_vel_ * local_dist(local_gen)
+        );
+        trajectory.velocities[t] += vel_noise;
+        
+        // Constrain velocities
+        if (trajectory.velocities[t].norm() > max_velocity_) {
+            trajectory.velocities[t] = trajectory.velocities[t].normalized() * max_velocity_;
+        }
+    }
+}
+
+// 🚀 Thread-safe rolloutTrajectory with path guidance and local random generators
+void MPPIPlanner::rolloutTrajectory(const Vector3d& start_pos,
+                                   const Vector3d& start_vel,
+                                   const Vector3d& goal_pos,
+                                   const Vector3d& goal_vel,
+                                   const vector<Vector3d>& guide_path,
+                                   MPPITrajectory& trajectory,
+                                   std::mt19937& local_gen,
+                                   std::normal_distribution<double>& local_dist) {
+    // Initialize trajectory
+    trajectory.positions[0] = start_pos;
+    trajectory.velocities[0] = start_vel;
+    trajectory.accelerations[0] = Vector3d::Zero();
+    
+    // Precompute path segment lengths for interpolation
+    vector<double> segment_lengths;
+    double total_length = 0.0;
+    if (guide_path.size() >= 2) {
+        for (size_t i = 1; i < guide_path.size(); ++i) {
+            double len = (guide_path[i] - guide_path[i-1]).norm();
+            segment_lengths.push_back(len);
+            total_length += len;
+        }
+    }
+    
+    // Generate noisy control inputs guided by path
+    for (int t = 1; t < horizon_steps_; ++t) {
+        // Interpolate target position along guide path based on progress
+        double progress = (double)t / horizon_steps_;
+        double target_dist = progress * total_length;
+        
+        Vector3d target_pos = goal_pos;
+        if (!segment_lengths.empty()) {
+            double cumulative_len = 0.0;
+            for (size_t i = 0; i < segment_lengths.size(); ++i) {
+                if (cumulative_len + segment_lengths[i] >= target_dist) {
+                    double ratio = (target_dist - cumulative_len) / segment_lengths[i];
+                    target_pos = guide_path[i] + ratio * (guide_path[i+1] - guide_path[i]);
+                    break;
+                }
+                cumulative_len += segment_lengths[i];
+            }
+        }
+        
+        // Calculate control towards interpolated target
+        Vector3d pos_error = target_pos - trajectory.positions[t-1];
+        Vector3d vel_error = goal_vel - trajectory.velocities[t-1];
+        
+        // PD control with path guidance
+        Vector3d nominal_acc = 2.0 * pos_error + 1.0 * vel_error;
+        
+        // Add noise (using local thread-safe generator)
+        Vector3d noise_acc(
+            sigma_acc_ * local_dist(local_gen),
+            sigma_acc_ * local_dist(local_gen),
+            sigma_acc_ * local_dist(local_gen)
+        );
+        
+        trajectory.accelerations[t] = nominal_acc + noise_acc;
+        
+        // Apply dynamic constraints
+        constrainDynamics(trajectory.velocities[t-1], trajectory.accelerations[t]);
+        
+        // Forward integrate dynamics
+        trajectory.velocities[t] = trajectory.velocities[t-1] + trajectory.accelerations[t] * dt_;
+        trajectory.positions[t] = trajectory.positions[t-1] + trajectory.velocities[t-1] * dt_ + 
+                                 0.5 * trajectory.accelerations[t] * dt_ * dt_;
+        
+        // Add position noise
+        Vector3d pos_noise(
+            sigma_pos_ * local_dist(local_gen),
+            sigma_pos_ * local_dist(local_gen),
+            sigma_pos_ * local_dist(local_gen)
+        );
+        trajectory.positions[t] += pos_noise;
+        
+        // Add velocity noise
+        Vector3d vel_noise(
+            sigma_vel_ * local_dist(local_gen),
+            sigma_vel_ * local_dist(local_gen),
+            sigma_vel_ * local_dist(local_gen)
+        );
+        trajectory.velocities[t] += vel_noise;
+        
+        // Constrain velocities
+        if (trajectory.velocities[t].norm() > max_velocity_) {
+            trajectory.velocities[t] = trajectory.velocities[t].normalized() * max_velocity_;
+        }
+    }
 }
 
 } // namespace ego_planner
