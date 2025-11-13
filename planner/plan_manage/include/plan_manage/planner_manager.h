@@ -81,6 +81,7 @@ namespace ego_planner
     
     /* 🎨 NEW: Store all MPPI-optimized paths for visualization */
     std::vector<MPPIPathCandidate> all_mppi_paths_;
+    ros::Publisher all_mppi_paths_pub_;  // 🎨 Publisher for visualization
 
     int continous_failures_count_{0};
 
@@ -90,6 +91,9 @@ namespace ego_planner
                         double &time_inc);
 
     bool refineTrajAlgo(UniformBspline &traj, vector<Eigen::Vector3d> &start_end_derivative, double ratio, double &ts, Eigen::MatrixXd &optimal_control_points);
+
+    /* 🎨 Visualize all MPPI candidate paths */
+    void visualizeAllMPPIPaths();
 
     // !SECTION stable
 

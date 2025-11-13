@@ -2,6 +2,10 @@
 #include <plan_manage/planner_manager.h>
 #include <path_searching/topo_prm.h>
 #include <path_searching/mppi_planner.h>
+#include <visualization_msgs/MarkerArray.h>
+#include <visualization_msgs/Marker.h>
+#include <sstream>
+#include <iomanip>
 #include <thread>
 #include <omp.h>
 
@@ -57,6 +61,10 @@ namespace ego_planner
     mppi_planner_->setVehicleLimits(pp_.max_vel_, pp_.max_acc_);
 
     ROS_INFO("[PlannerManager] Initialized topological and MPPI planners");
+
+    // 🎨 Initialize publisher for all MPPI paths visualization
+    all_mppi_paths_pub_ = nh.advertise<visualization_msgs::MarkerArray>("/all_mppi_candidate_paths", 10);
+    ROS_INFO("[PlannerManager] Initialized MPPI multi-path visualization on /all_mppi_candidate_paths");
 
     visualization_ = vis;
   }
@@ -370,6 +378,9 @@ namespace ego_planner
                     all_mppi_paths_.push_back(path_vis);
                 }
                 ROS_INFO("[PlannerManager]   💾 Stored %zu MPPI-optimized paths for visualization", all_mppi_paths_.size());
+                
+                // 🎨 Publish all MPPI paths for RViz visualization
+                visualizeAllMPPIPaths();
                 
                 if (best_idx >= 0) {
                     ROS_INFO("[PlannerManager]   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -811,6 +822,112 @@ namespace ego_planner
     }
 
     return success;
+  }
+
+  // 🎨 Visualize all MPPI-optimized candidate paths with different colors
+  void EGOPlannerManager::visualizeAllMPPIPaths() {
+    if (all_mppi_paths_.empty()) {
+      return;
+    }
+
+    visualization_msgs::MarkerArray marker_array;
+    
+    // Color palette for different paths (rainbow colors)
+    std::vector<std::array<float, 3>> colors = {
+      {1.0, 0.0, 0.0},   // Red
+      {1.0, 0.5, 0.0},   // Orange
+      {0.0, 1.0, 0.0},   // Green
+      {0.0, 1.0, 1.0},   // Cyan
+      {0.0, 0.0, 1.0},   // Blue
+      {0.5, 0.0, 1.0},   // Purple
+      {1.0, 0.0, 1.0},   // Magenta
+      {1.0, 0.5, 0.5},   // Pink
+    };
+    
+    std::string frame_id = "world";
+    
+    for (size_t i = 0; i < all_mppi_paths_.size(); ++i) {
+      const auto& path = all_mppi_paths_[i];
+      
+      if (path.positions.size() < 2) continue;
+      
+      // Create line marker for the path
+      visualization_msgs::Marker line_marker;
+      line_marker.header.frame_id = frame_id;
+      line_marker.header.stamp = ros::Time::now();
+      line_marker.ns = "mppi_candidate_" + std::to_string(i);
+      line_marker.id = i * 2;
+      line_marker.type = visualization_msgs::Marker::LINE_STRIP;
+      line_marker.action = visualization_msgs::Marker::ADD;
+      line_marker.pose.orientation.w = 1.0;
+      
+      if (path.is_best) {
+        // Best path: Thick gold line
+        line_marker.scale.x = 0.15;
+        line_marker.color.r = 1.0;
+        line_marker.color.g = 0.84;
+        line_marker.color.b = 0.0;
+        line_marker.color.a = 1.0;
+      } else if (path.success) {
+        // Other successful paths: Thinner colored lines
+        line_marker.scale.x = 0.08;
+        auto& color = colors[i % colors.size()];
+        line_marker.color.r = color[0];
+        line_marker.color.g = color[1];
+        line_marker.color.b = color[2];
+        line_marker.color.a = 0.7;
+      } else {
+        // Failed paths: Thin semi-transparent red line
+        line_marker.scale.x = 0.05;
+        line_marker.color.r = 1.0;
+        line_marker.color.g = 0.0;
+        line_marker.color.b = 0.0;
+        line_marker.color.a = 0.3;
+      }
+      
+      // Add all points to the line
+      for (const auto& pt : path.positions) {
+        geometry_msgs::Point p;
+        p.x = pt.x();
+        p.y = pt.y();
+        p.z = pt.z();
+        line_marker.points.push_back(p);
+      }
+      
+      marker_array.markers.push_back(line_marker);
+      
+      // Add text label with path info
+      if (path.success && path.positions.size() > 0) {
+        visualization_msgs::Marker text_marker;
+        text_marker.header = line_marker.header;
+        text_marker.ns = "mppi_label_" + std::to_string(i);
+        text_marker.id = i * 2 + 1;
+        text_marker.type = visualization_msgs::Marker::TEXT_VIEW_FACING;
+        text_marker.action = visualization_msgs::Marker::ADD;
+        
+        // Position at path start with offset
+        text_marker.pose.position.x = path.positions[0].x();
+        text_marker.pose.position.y = path.positions[0].y();
+        text_marker.pose.position.z = path.positions[0].z() + 0.5;
+        text_marker.pose.orientation.w = 1.0;
+        
+        text_marker.scale.z = 0.25;
+        text_marker.color = line_marker.color;
+        
+        std::stringstream ss;
+        if (path.is_best) {
+          ss << "★ #" << i+1 << " ★\n" << std::fixed << std::setprecision(2) << path.normalized_cost;
+        } else {
+          ss << "#" << i+1 << "\n" << std::fixed << std::setprecision(2) << path.normalized_cost;
+        }
+        text_marker.text = ss.str();
+        
+        marker_array.markers.push_back(text_marker);
+      }
+    }
+    
+    all_mppi_paths_pub_.publish(marker_array);
+    ROS_DEBUG("[PlannerManager] Published %zu MPPI candidate paths for visualization", all_mppi_paths_.size());
   }
 
   // !SECTION

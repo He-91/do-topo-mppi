@@ -233,9 +233,15 @@ for (size_t i = 0; i < all_paths.size(); ++i) {
 ```
 
 **效果**: 
-- 可视化所有候选方案，理解路径选择决策
+- **RViz可视化**: `/all_mppi_candidate_paths` 话题
+  - 金色粗线 (0.15m) = 最优路径 ★
+  - 彩虹色细线 (0.08m) = 其他成功路径
+  - 半透明红线 (0.05m) = 失败路径
+- **路径标签**: 显示路径编号和归一化代价
 - 无额外计算开销（只保存已有数据）
 - 内存开销: ~50KB/次规划
+
+**RViz配置**: `map_manager/rviz/map.rviz` 已添加 `MPPI_Candidate_Paths` 显示项
 
 ---
 
