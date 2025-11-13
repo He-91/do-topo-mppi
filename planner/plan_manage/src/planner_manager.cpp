@@ -358,6 +358,19 @@ namespace ego_planner
                     }
                 }
                 
+                // 🎨 NEW: Store all MPPI-optimized paths for visualization
+                all_mppi_paths_.clear();
+                for (size_t i = 0; i < mppi_candidates.size(); ++i) {
+                    MPPIPathCandidate path_vis;
+                    path_vis.positions = mppi_candidates[i].mppi_result.positions;
+                    path_vis.cost = mppi_candidates[i].mppi_result.cost;
+                    path_vis.normalized_cost = mppi_candidates[i].normalized_cost;
+                    path_vis.is_best = (i == best_idx);
+                    path_vis.success = mppi_candidates[i].success;
+                    all_mppi_paths_.push_back(path_vis);
+                }
+                ROS_INFO("[PlannerManager]   💾 Stored %zu MPPI-optimized paths for visualization", all_mppi_paths_.size());
+                
                 if (best_idx >= 0) {
                     ROS_INFO("[PlannerManager]   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
                     ROS_INFO("[PlannerManager]   🏆 Best MPPI: Path #%d with normalized_cost=%.3f", 

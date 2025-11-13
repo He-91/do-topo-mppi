@@ -46,6 +46,18 @@ namespace ego_planner
     bool planWithMPPI(const Eigen::Vector3d &start_pos, const Eigen::Vector3d &start_vel,
                      const Eigen::Vector3d &goal_pos, const Eigen::Vector3d &goal_vel,
                      MPPITrajectory &optimal_traj);
+    
+    /* 🎨 NEW: Visualization data structures and access */
+    struct MPPIPathCandidate {
+        std::vector<Eigen::Vector3d> positions;
+        double cost;
+        double normalized_cost;
+        bool is_best;
+        bool success;
+    };
+    
+    /* Get all MPPI-optimized paths for visualization */
+    const std::vector<MPPIPathCandidate>& getAllMPPIPaths() const { return all_mppi_paths_; }
 
     void initPlanModules(ros::NodeHandle &nh, PlanningVisualization::Ptr vis = NULL);
 
@@ -66,6 +78,9 @@ namespace ego_planner
     
     /* 🚀 IMPROVED: Backup MPPI result for B-spline fallback */
     MPPITrajectory mppi_result_backup_;
+    
+    /* 🎨 NEW: Store all MPPI-optimized paths for visualization */
+    std::vector<MPPIPathCandidate> all_mppi_paths_;
 
     int continous_failures_count_{0};
 

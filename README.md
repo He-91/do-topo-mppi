@@ -198,7 +198,48 @@ target_link_libraries(path_searching \${OpenMP_CXX_LIBRARIES})
 
 ---
 
-### 改进6: 采样数提升 500→1000
+### 改进6: MPPI多路径可视化
+
+**功能**: 保存并可视化所有MPPI优化后的候选路径（4-6条），而非仅最优路径
+
+**文件**: `planner/plan_manage/include/plan_manage/planner_manager.h`
+
+```cpp
+/* 🎨 多路径可视化数据结构 */
+struct MPPIPathCandidate {
+    std::vector<Eigen::Vector3d> positions;  // 路径点
+    double cost;                              // 原始代价
+    double normalized_cost;                   // 归一化代价（cost/length）
+    bool is_best;                             // 是否为最优路径
+    bool success;                             // MPPI优化是否成功
+};
+
+/* 获取所有MPPI优化路径 */
+const std::vector<MPPIPathCandidate>& getAllMPPIPaths() const;
+```
+
+**使用方法**:
+```cpp
+// 在FSM节点中访问所有路径
+const auto& all_paths = planner_manager_->getAllMPPIPaths();
+
+for (size_t i = 0; i < all_paths.size(); ++i) {
+    if (all_paths[i].is_best) {
+        // 最优路径: 可视化为金色粗线
+    } else if (all_paths[i].success) {
+        // 其他成功路径: 彩色细线
+    }
+}
+```
+
+**效果**: 
+- 可视化所有候选方案，理解路径选择决策
+- 无额外计算开销（只保存已有数据）
+- 内存开销: ~50KB/次规划
+
+---
+
+### 改进7: 采样数提升 500→1000
 
 **文件**: \`planner/path_searching/src/mppi_planner.cpp\`
 
