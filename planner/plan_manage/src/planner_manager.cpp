@@ -863,14 +863,14 @@ namespace ego_planner
       
       if (path.is_best) {
         // Best path: Thick gold line
-        line_marker.scale.x = 0.15;
+        line_marker.scale.x = 0.08;  // 调细: 0.15 → 0.08
         line_marker.color.r = 1.0;
         line_marker.color.g = 0.84;
         line_marker.color.b = 0.0;
         line_marker.color.a = 1.0;
       } else if (path.success) {
         // Other successful paths: Thinner colored lines
-        line_marker.scale.x = 0.08;
+        line_marker.scale.x = 0.05;  // 调细: 0.08 → 0.05
         auto& color = colors[i % colors.size()];
         line_marker.color.r = color[0];
         line_marker.color.g = color[1];
@@ -878,7 +878,7 @@ namespace ego_planner
         line_marker.color.a = 0.7;
       } else {
         // Failed paths: Thin semi-transparent red line
-        line_marker.scale.x = 0.05;
+        line_marker.scale.x = 0.03;  // 调细: 0.05 → 0.03
         line_marker.color.r = 1.0;
         line_marker.color.g = 0.0;
         line_marker.color.b = 0.0;
