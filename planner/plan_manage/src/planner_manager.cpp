@@ -885,13 +885,31 @@ namespace ego_planner
         line_marker.color.a = 0.3;
       }
       
-      // Add all points to the line
-      for (const auto& pt : path.positions) {
+      // Add all points to the line (with interpolation for smoother visualization)
+      for (size_t j = 0; j < path.positions.size(); ++j) {
         geometry_msgs::Point p;
-        p.x = pt.x();
-        p.y = pt.y();
-        p.z = pt.z();
+        p.x = path.positions[j].x();
+        p.y = path.positions[j].y();
+        p.z = path.positions[j].z();
         line_marker.points.push_back(p);
+        
+        // 🎨 Add interpolated points between waypoints for smoother visualization
+        if (j < path.positions.size() - 1) {
+          Eigen::Vector3d curr = path.positions[j];
+          Eigen::Vector3d next = path.positions[j + 1];
+          double dist = (next - curr).norm();
+          int num_interp = std::max(1, (int)(dist / 0.1));  // 每0.1m插值一个点
+          
+          for (int k = 1; k < num_interp; ++k) {
+            double t = (double)k / num_interp;
+            Eigen::Vector3d interp_pt = curr + t * (next - curr);
+            geometry_msgs::Point ip;
+            ip.x = interp_pt.x();
+            ip.y = interp_pt.y();
+            ip.z = interp_pt.z();
+            line_marker.points.push_back(ip);
+          }
+        }
       }
       
       marker_array.markers.push_back(line_marker);
