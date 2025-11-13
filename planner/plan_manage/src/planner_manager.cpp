@@ -58,10 +58,6 @@ namespace ego_planner
 
     ROS_INFO("[PlannerManager] Initialized topological and MPPI planners");
 
-    /* Initialize TOPO+MPPI visualization publisher */
-    topo_mppi_vis_pub_ = nh.advertise<visualization_msgs::MarkerArray>("/topo_mppi_paths", 10);
-    ROS_INFO("[PlannerManager] Initialized TOPO+MPPI visualization publisher on /topo_mppi_paths");
-
     visualization_ = vis;
   }
 
@@ -351,10 +347,6 @@ namespace ego_planner
                     }
                 }
                 
-                // 🎨 Visualize ALL paths after parallel optimization
-                for (size_t i = 0; i < topo_paths.size(); ++i) {
-                    visualizeTopoMPPIPaths(i, topo_paths[i], mppi_candidates[i].mppi_result, false);
-                }
                 
                 // Select best MPPI result based on normalized cost
                 double best_norm_cost = std::numeric_limits<double>::max();
@@ -372,10 +364,6 @@ namespace ego_planner
                              best_idx+1, best_norm_cost);
                     ROS_INFO("[PlannerManager]   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
                     ROS_WARN("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-                    
-                    // 🎨 Highlight the best path
-                    visualizeTopoMPPIPaths(best_idx, mppi_candidates[best_idx].topo_path,
-                                          mppi_candidates[best_idx].mppi_result, true);
                     
                     // 🚀 IMPROVED: Backup MPPI result for potential B-spline fallback
                     mppi_result_backup_ = mppi_candidates[best_idx].mppi_result;
@@ -810,153 +798,6 @@ namespace ego_planner
     }
 
     return success;
-  }
-
-  // 🎨 Visualize TOPO path + its MPPI optimization result with matching colors
-  void EGOPlannerManager::visualizeTopoMPPIPaths(int path_id,
-                                                 const TopoPath& topo_path,
-                                                 const MPPITrajectory& mppi_result,
-                                                 bool is_best) {
-    visualization_msgs::MarkerArray marker_array;
-    
-    // Get unified color for this path
-    PathColor color = TOPO_COLORS[path_id % 10];
-    
-    // Get frame_id from grid_map
-    std::string frame_id = "world";
-    
-    // 1. 🟥 TOPO Original Path (Medium line, semi-transparent)
-    visualization_msgs::Marker topo_marker;
-    topo_marker.header.frame_id = frame_id;
-    topo_marker.header.stamp = ros::Time::now();
-    topo_marker.ns = "topo_path";
-    topo_marker.id = path_id * 1000;  // Unique ID per path
-    topo_marker.type = visualization_msgs::Marker::LINE_STRIP;
-    topo_marker.action = visualization_msgs::Marker::ADD;
-    topo_marker.pose.orientation.w = 1.0;
-    
-    // Medium line for TOPO path
-    topo_marker.scale.x = 0.10;  // Thinner than before
-    topo_marker.color.r = color.r;
-    topo_marker.color.g = color.g;
-    topo_marker.color.b = color.b;
-    topo_marker.color.a = 0.5;  // More transparent
-    
-    for (const auto& pt : topo_path.path) {
-      geometry_msgs::Point p;
-      p.x = pt.x(); p.y = pt.y(); p.z = pt.z();
-      topo_marker.points.push_back(p);
-    }
-    marker_array.markers.push_back(topo_marker);
-    
-    // 2. 🔷 MPPI Optimized Path (Thicker, more opaque, SAME COLOR as Topo)
-    visualization_msgs::Marker mppi_marker;
-    mppi_marker.header = topo_marker.header;
-    mppi_marker.ns = "mppi_path";
-    mppi_marker.id = path_id * 1000 + 1;
-    mppi_marker.type = visualization_msgs::Marker::LINE_STRIP;
-    mppi_marker.action = visualization_msgs::Marker::ADD;
-    mppi_marker.pose.orientation.w = 1.0;
-    
-    // 🎨 Thicker line for MPPI (or thickest if best) - 与Topo同色但更粗更不透明
-    mppi_marker.scale.x = is_best ? 0.30 : 0.18;  // Larger for visibility
-    mppi_marker.color.r = color.r;
-    mppi_marker.color.g = color.g;
-    mppi_marker.color.b = color.b;
-    mppi_marker.color.a = is_best ? 1.0 : 0.9;  // More opaque than Topo
-    
-    for (const auto& pt : mppi_result.positions) {
-      geometry_msgs::Point p;
-      p.x = pt.x(); p.y = pt.y(); p.z = pt.z();
-      mppi_marker.points.push_back(p);
-    }
-    marker_array.markers.push_back(mppi_marker);
-    
-    // 2.5 🎨 MPPI Path Label (endpoint)
-    if (!mppi_result.positions.empty()) {
-      visualization_msgs::Marker mppi_label;
-      mppi_label.header = topo_marker.header;
-      mppi_label.ns = "mppi_labels";
-      mppi_label.id = path_id * 1000 + 2;
-      mppi_label.type = visualization_msgs::Marker::TEXT_VIEW_FACING;
-      mppi_label.action = visualization_msgs::Marker::ADD;
-      
-      // Position at endpoint
-      const auto& end_pt = mppi_result.positions.back();
-      mppi_label.pose.position.x = end_pt.x();
-      mppi_label.pose.position.y = end_pt.y();
-      mppi_label.pose.position.z = end_pt.z() + 0.6;
-      mppi_label.pose.orientation.w = 1.0;
-      
-      mppi_label.scale.z = 0.30;
-      mppi_label.color.r = color.r;
-      mppi_label.color.g = color.g;
-      mppi_label.color.b = color.b;
-      mppi_label.color.a = 1.0;
-      
-      std::stringstream ss;
-      ss << "MPPI#" << path_id;
-      mppi_label.text = ss.str();
-      
-      marker_array.markers.push_back(mppi_label);
-    }
-    
-    // 3. 🏆 Best Path Label (if this is the best one) - 金色高亮
-    if (is_best && !mppi_result.positions.empty()) {
-      // 3.1 金色高亮线条覆盖最佳路径
-      visualization_msgs::Marker highlight_marker;
-      highlight_marker.header = topo_marker.header;
-      highlight_marker.ns = "best_highlight";
-      highlight_marker.id = 9998;
-      highlight_marker.type = visualization_msgs::Marker::LINE_STRIP;
-      highlight_marker.action = visualization_msgs::Marker::ADD;
-      highlight_marker.pose.orientation.w = 1.0;
-      
-      highlight_marker.scale.x = 0.35;  // 超粗线
-      highlight_marker.color.r = 1.0;   // 金色
-      highlight_marker.color.g = 0.84;
-      highlight_marker.color.b = 0.0;
-      highlight_marker.color.a = 0.7;   // 半透明金色光晕
-      
-      for (const auto& pt : mppi_result.positions) {
-        geometry_msgs::Point p;
-        p.x = pt.x(); p.y = pt.y(); p.z = pt.z() + 0.05; // 稍微抬高避免重叠
-        highlight_marker.points.push_back(p);
-      }
-      marker_array.markers.push_back(highlight_marker);
-      
-      // 3.2 最佳路径标签
-      visualization_msgs::Marker label_marker;
-      label_marker.header = topo_marker.header;
-      label_marker.ns = "best_label";
-      label_marker.id = 9999;
-      label_marker.type = visualization_msgs::Marker::TEXT_VIEW_FACING;
-      label_marker.action = visualization_msgs::Marker::ADD;
-      
-      // Position above the middle of the path
-      size_t mid_idx = mppi_result.positions.size() / 2;
-      label_marker.pose.position.x = mppi_result.positions[mid_idx].x();
-      label_marker.pose.position.y = mppi_result.positions[mid_idx].y();
-      label_marker.pose.position.z = mppi_result.positions[mid_idx].z() + 1.0;
-      label_marker.pose.orientation.w = 1.0;
-      
-      label_marker.scale.z = 0.5;  // 更大的文本
-      label_marker.color.r = 1.0;  // 金色
-      label_marker.color.g = 0.84;
-      label_marker.color.b = 0.0;
-      label_marker.color.a = 1.0;
-      label_marker.text = "★ BEST #" + std::to_string(path_id + 1) + " ★";
-      
-      marker_array.markers.push_back(label_marker);
-      
-      ROS_INFO("[PlannerManager] 🎨 Visualized ★ BEST path #%d: %zu TOPO waypoints, %zu MPPI points", 
-               path_id + 1, topo_path.path.size(), mppi_result.positions.size());
-    } else {
-      ROS_DEBUG("[PlannerManager] 🎨 Visualized path #%d: %zu TOPO waypoints, %zu MPPI points", 
-                path_id + 1, topo_path.path.size(), mppi_result.positions.size());
-    }
-    
-    topo_mppi_vis_pub_.publish(marker_array);
   }
 
   // !SECTION
